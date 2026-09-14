@@ -2,7 +2,9 @@ import type { ProjectFile } from "./domain/ProjectFile"
 import type { ProjectSnapshot } from "./domain/ProjectSnapshot"
 import type { StructuralSymbol } from "./domain/StructuralAnalysis"
 import type { SymbolRecord } from "./domain/SymbolRecord"
+import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
+import { DependencyIndex } from "./indexing/DependencyIndex"
 import { ProjectScanner } from "./indexing/ProjectScanner"
 
 export interface ProjectSearchOptions {
@@ -17,12 +19,14 @@ export class ProjectBrain {
 	private readonly rootPath: string
 	private readonly scanner: ProjectScanner
 	private readonly symbolIndex: SymbolIndex
+	private readonly dependencyIndex: DependencyIndex
 	private snapshot: ProjectSnapshot | undefined
 
 	constructor(rootPath: string) {
 		this.rootPath = rootPath
 		this.scanner = new ProjectScanner(rootPath)
 		this.symbolIndex = new SymbolIndex()
+		this.dependencyIndex = new DependencyIndex()
 	}
 
 	async initialize(): Promise<ProjectSnapshot> {
@@ -45,6 +49,7 @@ export class ProjectBrain {
 		}
 
 		await this.symbolIndex.indexFiles(files)
+		this.dependencyIndex.build(files, this.getAnalyses())
 
 		const snapshot: ProjectSnapshot = {
 			rootPath: this.rootPath,
@@ -81,21 +86,12 @@ export class ProjectBrain {
 
 		return Object.values(this.snapshot.filesByPath)
 			.filter((file) => {
-				if (options.language && file.language !== options.language) {
-					return false
-				}
-
-				if (options.kind && file.kind !== options.kind) {
-					return false
-				}
-
+				if (options.language && file.language !== options.language) return false
+				if (options.kind && file.kind !== options.kind) return false
 				if (
 					options.directory &&
 					!file.relativePath.startsWith(options.directory.replace(/\\/g, "/").replace(/\/$/, "") + "/")
-				) {
-					return false
-				}
-
+				) return false
 				return file.relativePath.toLowerCase().includes(query)
 			})
 			.slice(0, limit)
@@ -113,29 +109,48 @@ export class ProjectBrain {
 		return this.symbolIndex.getAnalysis(filePath)
 	}
 
+	getDependencies(filePath: string): string[] {
+		return this.dependencyIndex.getDependencies(filePath)
+	}
+
+	getDependents(filePath: string): string[] {
+		return this.dependencyIndex.getDependents(filePath)
+	}
+
+	getDependencyGraph(): DependencyGraphSnapshot {
+		return this.dependencyIndex.getSnapshot()
+	}
+
 	getRootPath(): string {
 		return this.rootPath
 	}
 
 	dispose(): void {
 		this.symbolIndex.clear()
+		this.dependencyIndex.clear()
 		this.snapshot = undefined
+	}
+
+	private getAnalyses() {
+		const analyses = new Map<string, NonNullable<ReturnType<SymbolIndex["getAnalysis"]>>>()
+		for (const file of this.snapshot ? Object.keys(this.snapshot.filesByPath) : []) {
+			const analysis = this.symbolIndex.getAnalysis(file)
+			if (analysis) analyses.set(file, analysis)
+		}
+		if (analyses.size === 0) {
+			for (const file of Object.keys(this.snapshot?.filesByPath ?? {})) {
+				const analysis = this.symbolIndex.getAnalysis(file)
+				if (analysis) analyses.set(file, analysis)
+			}
+		}
+		return analyses
 	}
 
 	private detectEntryPoints(files: ProjectFile[]): string[] {
 		const entryPointNames = new Set([
-			"index.ts",
-			"index.tsx",
-			"index.js",
-			"index.jsx",
-			"main.ts",
-			"main.tsx",
-			"main.js",
-			"main.jsx",
-			"app.ts",
-			"app.tsx",
-			"app.js",
-			"app.jsx",
+			"index.ts", "index.tsx", "index.js", "index.jsx",
+			"main.ts", "main.tsx", "main.js", "main.jsx",
+			"app.ts", "app.tsx", "app.js", "app.jsx",
 		])
 
 		return files
