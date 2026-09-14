@@ -5,6 +5,8 @@ import type { SymbolRecord } from "./domain/SymbolRecord"
 import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
 import type { CallGraphSnapshot } from "./domain/CallGraph"
 import type { GitBlameLine, GitCommit, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
+import type { BrainQueryOptions, BrainQueryResult } from "./domain/BrainQuery"
+import type { SemanticIndex } from "./domain/SemanticIndex"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
 import { DependencyIndex } from "./indexing/DependencyIndex"
 import { CallGraphIndex } from "./indexing/CallGraphIndex"
@@ -26,15 +28,17 @@ export class ProjectBrain {
 	private readonly dependencyIndex: DependencyIndex
 	private readonly callGraphIndex: CallGraphIndex
 	private readonly gitIntelligence?: GitIntelligence
+	private readonly semanticIndex?: SemanticIndex
 	private snapshot: ProjectSnapshot | undefined
 
-	constructor(rootPath: string, gitRunner?: GitCommandRunner) {
+	constructor(rootPath: string, gitRunner?: GitCommandRunner, semanticIndex?: SemanticIndex) {
 		this.rootPath = rootPath
 		this.scanner = new ProjectScanner(rootPath)
 		this.symbolIndex = new SymbolIndex()
 		this.dependencyIndex = new DependencyIndex()
 		this.callGraphIndex = new CallGraphIndex()
 		this.gitIntelligence = gitRunner ? new GitIntelligence(rootPath, gitRunner) : undefined
+		this.semanticIndex = semanticIndex
 	}
 
 	async initialize(): Promise<ProjectSnapshot> { return this.index() }
@@ -65,6 +69,52 @@ export class ProjectBrain {
 		}
 		this.snapshot = snapshot
 		return snapshot
+	}
+
+	async query(options: BrainQueryOptions): Promise<BrainQueryResult> {
+		if (!this.snapshot) await this.index()
+		const limit = Math.max(1, options.limit ?? 20)
+		const files = this.search({
+			query: options.query,
+			language: options.language,
+			directory: options.directory,
+			limit,
+		})
+		const symbols = this.findSymbols({ name: options.query, limit: Math.max(limit * 2, 20) })
+			.filter((symbol) => this.matchesDirectory(symbol.filePath, options.directory))
+			.slice(0, limit)
+		const semantic = options.includeSemantic === false || !this.semanticIndex
+			? []
+			: await this.semanticIndex.search(options.query, {
+					...options.semantic,
+					limit: options.semantic?.limit ?? limit,
+					directory: options.semantic?.directory ?? options.directory,
+				})
+		const related = new Set<string>()
+		for (const file of files) {
+			this.addRelatedFile(related, file.relativePath)
+		}
+		for (const symbol of symbols) {
+			related.add(symbol.filePath)
+			for (const dependency of this.getDependencies(symbol.filePath)) related.add(dependency)
+			for (const dependent of this.getDependents(symbol.filePath)) related.add(dependent)
+			for (const caller of this.getCallers(symbol.id)) {
+				const callerSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find((candidate) => candidate.id === caller)
+				if (callerSymbol) related.add(callerSymbol.filePath)
+			}
+			for (const callee of this.getCallees(symbol.id)) {
+				const calleeSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find((candidate) => candidate.id === callee)
+				if (calleeSymbol) related.add(calleeSymbol.filePath)
+			}
+		}
+		for (const result of semantic) related.add(result.filePath)
+		return {
+			query: options.query,
+			files,
+			symbols,
+			semantic,
+			relatedFiles: [...related].filter((filePath) => this.matchesDirectory(filePath, options.directory)).slice(0, limit * 4),
+		}
 	}
 
 	getSnapshot(): ProjectSnapshot | undefined { return this.snapshot }
@@ -98,7 +148,7 @@ export class ProjectBrain {
 	async getGitDiff(base?: string, head = "HEAD", filePath?: string): Promise<GitDiffSummary> { return this.requireGit().getDiff(base, head, filePath) }
 
 	getRootPath(): string { return this.rootPath }
-	 dispose(): void {
+	dispose(): void {
 		this.symbolIndex.clear()
 		this.dependencyIndex.clear()
 		this.callGraphIndex.clear()
@@ -108,6 +158,18 @@ export class ProjectBrain {
 	private requireGit(): GitIntelligence {
 		if (!this.gitIntelligence) throw new Error("Git intelligence requires a GitCommandRunner")
 		return this.gitIntelligence
+	}
+
+	private matchesDirectory(filePath: string, directory?: string): boolean {
+		if (!directory) return true
+		const normalized = directory.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "")
+		return filePath === normalized || filePath.startsWith(`${normalized}/`)
+	}
+
+	private addRelatedFile(related: Set<string>, filePath: string): void {
+		related.add(filePath)
+		for (const dependency of this.getDependencies(filePath)) related.add(dependency)
+		for (const dependent of this.getDependents(filePath)) related.add(dependent)
 	}
 
 	private detectEntryPoints(files: ProjectFile[]): string[] {
