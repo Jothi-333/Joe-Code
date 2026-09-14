@@ -4,7 +4,7 @@ import type { StructuralSymbol } from "./domain/StructuralAnalysis"
 import type { SymbolRecord } from "./domain/SymbolRecord"
 import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
 import type { CallGraphSnapshot } from "./domain/CallGraph"
-import type { GitBlameLine, GitCommit, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
+import type { GitCommit, GitBlameLine, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
 import type { BrainQueryOptions, BrainQueryResult } from "./domain/BrainQuery"
 import type { SemanticIndex } from "./domain/SemanticIndex"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
@@ -74,15 +74,16 @@ export class ProjectBrain {
 	async query(options: BrainQueryOptions): Promise<BrainQueryResult> {
 		if (!this.snapshot) await this.index()
 		const limit = Math.max(1, options.limit ?? 20)
-		const files = this.search({
-			query: options.query,
-			language: options.language,
-			directory: options.directory,
-			limit,
-		})
+		const filesByPath = this.snapshot?.filesByPath ?? {}
+		const files = this.search({ query: options.query, language: options.language, directory: options.directory, limit })
 		const symbols = this.findSymbols({ name: options.query, limit: Math.max(limit * 2, 20) })
 			.filter((symbol) => this.matchesDirectory(symbol.filePath, options.directory))
 			.slice(0, limit)
+		const resultFiles = new Map(files.map((file) => [file.relativePath, file]))
+		for (const symbol of symbols) {
+			const file = filesByPath[symbol.filePath]
+			if (file) resultFiles.set(file.relativePath, file)
+		}
 		const semantic = options.includeSemantic === false || !this.semanticIndex
 			? []
 			: await this.semanticIndex.search(options.query, {
@@ -91,9 +92,7 @@ export class ProjectBrain {
 					directory: options.semantic?.directory ?? options.directory,
 				})
 		const related = new Set<string>()
-		for (const file of files) {
-			this.addRelatedFile(related, file.relativePath)
-		}
+		for (const file of resultFiles.values()) this.addRelatedFile(related, file.relativePath)
 		for (const symbol of symbols) {
 			related.add(symbol.filePath)
 			for (const dependency of this.getDependencies(symbol.filePath)) related.add(dependency)
@@ -110,7 +109,7 @@ export class ProjectBrain {
 		for (const result of semantic) related.add(result.filePath)
 		return {
 			query: options.query,
-			files,
+			files: [...resultFiles.values()].slice(0, limit),
 			symbols,
 			semantic,
 			relatedFiles: [...related].filter((filePath) => this.matchesDirectory(filePath, options.directory)).slice(0, limit * 4),
