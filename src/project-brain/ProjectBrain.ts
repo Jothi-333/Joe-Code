@@ -4,9 +4,11 @@ import type { StructuralSymbol } from "./domain/StructuralAnalysis"
 import type { SymbolRecord } from "./domain/SymbolRecord"
 import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
 import type { CallGraphSnapshot } from "./domain/CallGraph"
+import type { GitBlameLine, GitCommit, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
 import { DependencyIndex } from "./indexing/DependencyIndex"
 import { CallGraphIndex } from "./indexing/CallGraphIndex"
+import { GitIntelligence } from "./indexing/GitIntelligence"
 import { ProjectScanner } from "./indexing/ProjectScanner"
 
 export interface ProjectSearchOptions {
@@ -23,19 +25,19 @@ export class ProjectBrain {
 	private readonly symbolIndex: SymbolIndex
 	private readonly dependencyIndex: DependencyIndex
 	private readonly callGraphIndex: CallGraphIndex
+	private readonly gitIntelligence?: GitIntelligence
 	private snapshot: ProjectSnapshot | undefined
 
-	constructor(rootPath: string) {
+	constructor(rootPath: string, gitRunner?: GitCommandRunner) {
 		this.rootPath = rootPath
 		this.scanner = new ProjectScanner(rootPath)
 		this.symbolIndex = new SymbolIndex()
 		this.dependencyIndex = new DependencyIndex()
 		this.callGraphIndex = new CallGraphIndex()
+		this.gitIntelligence = gitRunner ? new GitIntelligence(rootPath, gitRunner) : undefined
 	}
 
-	async initialize(): Promise<ProjectSnapshot> {
-		return this.index()
-	}
+	async initialize(): Promise<ProjectSnapshot> { return this.index() }
 
 	async index(): Promise<ProjectSnapshot> {
 		const now = Date.now()
@@ -67,7 +69,6 @@ export class ProjectBrain {
 
 	getSnapshot(): ProjectSnapshot | undefined { return this.snapshot }
 	getFile(relativePath: string): ProjectFile | undefined { return this.snapshot?.filesByPath[relativePath] }
-
 	search(options: ProjectSearchOptions): ProjectFile[] {
 		if (!this.snapshot) return []
 		const query = options.query.toLowerCase()
@@ -89,13 +90,24 @@ export class ProjectBrain {
 	getCallees(symbolId: string): string[] { return this.callGraphIndex.getCallees(symbolId) }
 	getCallers(symbolId: string): string[] { return this.callGraphIndex.getCallers(symbolId) }
 	getCallGraph(): CallGraphSnapshot { return this.callGraphIndex.getSnapshot() }
-	getRootPath(): string { return this.rootPath }
 
-	dispose(): void {
+	async getGitStatus(): Promise<GitRepositoryStatus> { return this.requireGit().getStatus() }
+	async getRecentCommits(limit = 20): Promise<GitCommit[]> { return this.requireGit().getRecentCommits(limit) }
+	async getFileHistory(filePath: string, limit = 20): Promise<GitFileHistoryEntry[]> { return this.requireGit().getFileHistory(filePath, limit) }
+	async getBlame(filePath: string): Promise<GitBlameLine[]> { return this.requireGit().getBlame(filePath) }
+	async getGitDiff(base?: string, head = "HEAD", filePath?: string): Promise<GitDiffSummary> { return this.requireGit().getDiff(base, head, filePath) }
+
+	getRootPath(): string { return this.rootPath }
+	 dispose(): void {
 		this.symbolIndex.clear()
 		this.dependencyIndex.clear()
 		this.callGraphIndex.clear()
 		this.snapshot = undefined
+	}
+
+	private requireGit(): GitIntelligence {
+		if (!this.gitIntelligence) throw new Error("Git intelligence requires a GitCommandRunner")
+		return this.gitIntelligence
 	}
 
 	private detectEntryPoints(files: ProjectFile[]): string[] {
