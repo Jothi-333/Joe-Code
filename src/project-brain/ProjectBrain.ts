@@ -1,5 +1,8 @@
 import type { ProjectFile } from "./domain/ProjectFile"
 import type { ProjectSnapshot } from "./domain/ProjectSnapshot"
+import type { StructuralSymbol } from "./domain/StructuralAnalysis"
+import type { SymbolRecord } from "./domain/SymbolRecord"
+import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
 import { ProjectScanner } from "./indexing/ProjectScanner"
 
 export interface ProjectSearchOptions {
@@ -13,11 +16,13 @@ export interface ProjectSearchOptions {
 export class ProjectBrain {
 	private readonly rootPath: string
 	private readonly scanner: ProjectScanner
+	private readonly symbolIndex: SymbolIndex
 	private snapshot: ProjectSnapshot | undefined
 
 	constructor(rootPath: string) {
 		this.rootPath = rootPath
 		this.scanner = new ProjectScanner(rootPath)
+		this.symbolIndex = new SymbolIndex()
 	}
 
 	async initialize(): Promise<ProjectSnapshot> {
@@ -38,6 +43,8 @@ export class ProjectBrain {
 				languages[file.language] = (languages[file.language] ?? 0) + 1
 			}
 		}
+
+		await this.symbolIndex.indexFiles(files)
 
 		const snapshot: ProjectSnapshot = {
 			rootPath: this.rootPath,
@@ -94,11 +101,24 @@ export class ProjectBrain {
 			.slice(0, limit)
 	}
 
+	findSymbols(query: SymbolQuery): SymbolRecord[] {
+		return this.symbolIndex.find(query)
+	}
+
+	getSymbolsInFile(filePath: string): SymbolRecord[] {
+		return this.symbolIndex.getByFile(filePath)
+	}
+
+	getSymbolAnalysis(filePath: string) {
+		return this.symbolIndex.getAnalysis(filePath)
+	}
+
 	getRootPath(): string {
 		return this.rootPath
 	}
 
 	dispose(): void {
+		this.symbolIndex.clear()
 		this.snapshot = undefined
 	}
 
@@ -123,3 +143,5 @@ export class ProjectBrain {
 			.map((file) => file.relativePath)
 	}
 }
+
+export type { StructuralSymbol }
