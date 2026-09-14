@@ -10,19 +10,23 @@ import type {
 	GitCommandRunner,
 } from "../domain/GitSnapshot"
 
+const FIELD_SEPARATOR = "\x1f"
+
 export class GitIntelligence {
 	constructor(private readonly rootPath: string, private readonly runner: GitCommandRunner) {}
 
 	async getStatus(): Promise<GitRepositoryStatus> {
 		const branch = (await this.runner.run(["branch", "--show-current"])).trim()
 		let upstream: string | undefined
-		try { upstream = (await this.runner.run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).trim() || undefined } catch {}
+		try {
+			upstream = (await this.runner.run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).trim() || undefined
+		} catch {}
 		let ahead = 0
 		let behind = 0
 		if (upstream) {
-			const [behindText, aheadText] = (await this.runner.run(["rev-list", "--left-right", "--count", `${upstream}...HEAD"])).trim().split(/\s+/)
-			behind = Number(behindText) || 0
-			ahead = Number(aheadText) || 0
+			const counts = (await this.runner.run(["rev-list", "--left-right", "--count", upstream + "...HEAD"])).trim().split(/\s+/)
+			behind = Number(counts[0]) || 0
+			ahead = Number(counts[1]) || 0
 		}
 		const entries = this.parseStatus(await this.runner.run(["status", "--porcelain=v1"]))
 		return { rootPath: this.rootPath, branch, upstream, ahead, behind, entries, isDirty: entries.length > 0 }
@@ -30,12 +34,15 @@ export class GitIntelligence {
 
 	async getRecentCommits(limit = 20): Promise<GitCommit[]> {
 		const count = Math.max(1, Math.min(limit, 200))
-		return this.parseCommits(await this.runner.run(["log", `-${count}`, "--date=iso-strict", "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s"]))
+		const format = ["%H", "%h", "%an", "%ae", "%aI", "%s"].join(FIELD_SEPARATOR)
+		const output = await this.runner.run(["log", "-" + count, "--date=iso-strict", "--format=" + format])
+		return this.parseCommits(output)
 	}
 
 	async getFileHistory(filePath: string, limit = 20): Promise<GitFileHistoryEntry[]> {
 		const count = Math.max(1, Math.min(limit, 200))
-		const output = await this.runner.run(["log", `-${count}`, "--date=iso-strict", "--name-status", "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s", "--", this.safePath(filePath)])
+		const format = ["%H", "%h", "%an", "%ae", "%aI", "%s"].join(FIELD_SEPARATOR)
+		const output = await this.runner.run(["log", "-" + count, "--date=iso-strict", "--name-status", "--format=" + format, "--", this.safePath(filePath)])
 		const commits = this.parseCommits(output)
 		const statuses = output.split("\n").filter((line) => /^[AMDRC][0-9]?\t/.test(line.trim())).map((line) => this.parseNameStatus(line))
 		return commits.map((commit, index) => ({ ...commit, path: statuses[index]?.path ?? this.safePath(filePath), status: statuses[index]?.status ?? "unknown" }))
@@ -47,7 +54,7 @@ export class GitIntelligence {
 
 	async getDiff(base?: string, head = "HEAD", filePath?: string): Promise<GitDiffSummary> {
 		const args = ["diff", "--numstat", "--find-renames"]
-		if (base) args.push(head === "HEAD" ? `${base}..HEAD` : `${base}...${head}`)
+		if (base) args.push(head === "HEAD" ? base + "..HEAD" : base + "..." + head)
 		if (filePath) args.push("--", this.safePath(filePath))
 		const files = this.parseNumstat(await this.runner.run(args))
 		return { base, head, files, additions: files.reduce((n, f) => n + f.additions, 0), deletions: files.reduce((n, f) => n + f.deletions, 0) }
@@ -55,7 +62,7 @@ export class GitIntelligence {
 
 	private safePath(filePath: string): string {
 		const value = filePath.replace(/\\/g, "/").replace(/^\.\//, "")
-		if (!value || value.startsWith("/") || value.split("/").includes("..")) throw new Error(`Git path must be relative to project root: ${filePath}`)
+		if (!value || value.startsWith("/") || value.split("/").includes("..")) throw new Error("Git path must be relative to project root: " + filePath)
 		return value
 	}
 
@@ -82,8 +89,8 @@ export class GitIntelligence {
 		const result: GitCommit[] = []
 		const seen = new Set<string>()
 		for (const line of output.split("\n")) {
-			if (!line.includes("\x1f")) continue
-			const [hash, shortHash, authorName, authorEmail, date, subject] = line.split("\x1f")
+			if (!line.includes(FIELD_SEPARATOR)) continue
+			const [hash, shortHash, authorName, authorEmail, date, subject] = line.split(FIELD_SEPARATOR)
 			if (!hash || seen.has(hash)) continue
 			seen.add(hash)
 			result.push({ hash, shortHash, authorName, authorEmail, date, subject })
