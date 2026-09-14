@@ -7,6 +7,8 @@ import type { CallGraphSnapshot } from "./domain/CallGraph"
 import type { GitCommit, GitBlameLine, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
 import type { BrainQueryOptions, BrainQueryResult } from "./domain/BrainQuery"
 import type { SemanticIndex } from "./domain/SemanticIndex"
+import type { ArchitectureModel } from "./architecture/ArchitectureModel"
+import { ArchitectureAnalyzer } from "./architecture/ArchitectureAnalyzer"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
 import { DependencyIndex } from "./indexing/DependencyIndex"
 import { CallGraphIndex } from "./indexing/CallGraphIndex"
@@ -27,9 +29,11 @@ export class ProjectBrain {
 	private readonly symbolIndex: SymbolIndex
 	private readonly dependencyIndex: DependencyIndex
 	private readonly callGraphIndex: CallGraphIndex
+	private readonly architectureAnalyzer: ArchitectureAnalyzer
 	private readonly gitIntelligence?: GitIntelligence
 	private readonly semanticIndex?: SemanticIndex
 	private snapshot: ProjectSnapshot | undefined
+	private architecture: ArchitectureModel | undefined
 
 	constructor(rootPath: string, gitRunner?: GitCommandRunner, semanticIndex?: SemanticIndex) {
 		this.rootPath = rootPath
@@ -37,6 +41,7 @@ export class ProjectBrain {
 		this.symbolIndex = new SymbolIndex()
 		this.dependencyIndex = new DependencyIndex()
 		this.callGraphIndex = new CallGraphIndex()
+		this.architectureAnalyzer = new ArchitectureAnalyzer()
 		this.gitIntelligence = gitRunner ? new GitIntelligence(rootPath, gitRunner) : undefined
 		this.semanticIndex = semanticIndex
 	}
@@ -56,6 +61,15 @@ export class ProjectBrain {
 		const analyses = this.symbolIndex.getAnalyses()
 		this.dependencyIndex.build(files, analyses)
 		this.callGraphIndex.build(files, this.symbolIndex.getAll(), analyses)
+		const entryPoints = this.detectEntryPoints(files)
+		this.architecture = this.architectureAnalyzer.analyze({
+			files,
+			symbols: this.symbolIndex.getAll(),
+			analyses,
+			dependencies: this.dependencyIndex.getSnapshot(),
+			callGraph: this.callGraphIndex.getSnapshot(),
+			entryPoints,
+		})
 		const snapshot: ProjectSnapshot = {
 			rootPath: this.rootPath,
 			createdAt: this.snapshot?.createdAt ?? now,
@@ -64,7 +78,7 @@ export class ProjectBrain {
 			sourceFiles: files.filter((file) => file.kind === "source").length,
 			languages,
 			packages: [],
-			entryPoints: this.detectEntryPoints(files),
+			entryPoints,
 			filesByPath,
 		}
 		this.snapshot = snapshot
@@ -117,6 +131,7 @@ export class ProjectBrain {
 	}
 
 	getSnapshot(): ProjectSnapshot | undefined { return this.snapshot }
+	getArchitecture(): ArchitectureModel | undefined { return this.architecture }
 	getFile(relativePath: string): ProjectFile | undefined { return this.snapshot?.filesByPath[relativePath] }
 	search(options: ProjectSearchOptions): ProjectFile[] {
 		if (!this.snapshot) return []
@@ -152,6 +167,7 @@ export class ProjectBrain {
 		this.dependencyIndex.clear()
 		this.callGraphIndex.clear()
 		this.snapshot = undefined
+		this.architecture = undefined
 	}
 
 	private requireGit(): GitIntelligence {
