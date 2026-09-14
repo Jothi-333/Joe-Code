@@ -2,6 +2,7 @@ import ts from "typescript"
 import type {
 	SourceLocation,
 	StructuralAnalysis,
+	StructuralCall,
 	StructuralExport,
 	StructuralImport,
 	StructuralSymbol,
@@ -57,6 +58,7 @@ export class TypeScriptAnalyzer implements LanguageAnalyzer {
 			symbols: this.dedupeSymbols(symbols),
 			imports,
 			exports: this.dedupeExports(exports),
+			calls: this.collectCalls(sourceFile),
 		}
 	}
 
@@ -106,6 +108,86 @@ export class TypeScriptAnalyzer implements LanguageAnalyzer {
 				location: this.location(sourceFile, node),
 			})
 		}
+	}
+
+	private collectCalls(sourceFile: ts.SourceFile): StructuralCall[] {
+		const calls: StructuralCall[] = []
+
+		const visit = (
+			node: ts.Node,
+			callerName?: string,
+			callerParentName?: string,
+			className?: string,
+		): void => {
+			let nextCallerName = callerName
+			let nextCallerParentName = callerParentName
+			let nextClassName = className
+
+			if (ts.isClassDeclaration(node) && node.name) {
+				nextClassName = node.name.text
+			}
+
+			if (ts.isFunctionDeclaration(node) && node.name) {
+				nextCallerName = node.name.text
+				nextCallerParentName = undefined
+			} else if (ts.isMethodDeclaration(node) && node.name) {
+				nextCallerName = this.propertyName(node.name)
+				nextCallerParentName = nextClassName
+			} else if (ts.isConstructorDeclaration(node)) {
+				nextCallerName = "constructor"
+				nextCallerParentName = nextClassName
+			} else if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+				const declaration = ts.isVariableDeclaration(node.parent) ? node.parent : undefined
+				if (declaration && ts.isIdentifier(declaration.name)) {
+					nextCallerName = declaration.name.text
+					nextCallerParentName = undefined
+				}
+			}
+
+			if (ts.isCallExpression(node)) {
+				const target = this.callTarget(node.expression, sourceFile)
+				if (target) {
+					calls.push({
+						...target,
+						callerName: nextCallerName,
+						callerParentName: nextCallerParentName,
+						kind: "call",
+						location: this.location(sourceFile, node),
+					})
+				}
+			}
+
+			if (ts.isNewExpression(node)) {
+				const target = this.callTarget(node.expression, sourceFile)
+				if (target) {
+					calls.push({
+						...target,
+						callerName: nextCallerName,
+						callerParentName: nextCallerParentName,
+						kind: "construct",
+						location: this.location(sourceFile, node),
+					})
+				}
+			}
+
+			node.forEachChild((child) => visit(child, nextCallerName, nextCallerParentName, nextClassName))
+		}
+
+		visit(sourceFile)
+		return this.dedupeCalls(calls)
+	}
+
+	private callTarget(expression: ts.Expression, sourceFile: ts.SourceFile): Pick<StructuralCall, "calleeName" | "receiver"> | undefined {
+		if (ts.isIdentifier(expression)) {
+			return { calleeName: expression.text }
+		}
+		if (ts.isPropertyAccessExpression(expression)) {
+			return {
+				calleeName: expression.name.text,
+				receiver: expression.expression.getText(sourceFile),
+			}
+		}
+		return undefined
 	}
 
 	private parseImport(sourceFile: ts.SourceFile, node: ts.ImportDeclaration): StructuralImport {
@@ -195,6 +277,16 @@ export class TypeScriptAnalyzer implements LanguageAnalyzer {
 		const seen = new Set<string>()
 		return entries.filter((entry) => {
 			const key = `${entry.name}:${entry.localName ?? ""}:${entry.source ?? ""}:${entry.location.start}`
+			if (seen.has(key)) return false
+			seen.add(key)
+			return true
+		})
+	}
+
+	private dedupeCalls(calls: StructuralCall[]): StructuralCall[] {
+		const seen = new Set<string>()
+		return calls.filter((call) => {
+			const key = `${call.kind}:${call.callerParentName ?? ""}:${call.callerName ?? ""}:${call.calleeName}:${call.receiver ?? ""}:${call.location.start}`
 			if (seen.has(key)) return false
 			seen.add(key)
 			return true
