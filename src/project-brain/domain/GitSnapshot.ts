@@ -25,7 +25,6 @@ export interface GitCommit {
 	authorEmail: string
 	date: string
 	subject: string
-	body?: string
 }
 
 export interface GitFileHistoryEntry extends GitCommit {
@@ -55,4 +54,8 @@ export interface GitDiffSummary {
 	files: GitDiffFile[]
 	additions: number
 	deletions: number
+}
+
+export interface GitCommandRunner {
+	run(args: readonly string[]): Promise<string>
 }
