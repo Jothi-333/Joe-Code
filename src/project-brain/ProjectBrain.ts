@@ -42,14 +42,11 @@ export class ProjectBrain {
 
 		for (const file of files) {
 			filesByPath[file.relativePath] = file
-
-			if (file.language) {
-				languages[file.language] = (languages[file.language] ?? 0) + 1
-			}
+			if (file.language) languages[file.language] = (languages[file.language] ?? 0) + 1
 		}
 
 		await this.symbolIndex.indexFiles(files)
-		this.dependencyIndex.build(files, this.getAnalyses())
+		this.dependencyIndex.build(files, this.getAnalyses(files))
 
 		const snapshot: ProjectSnapshot = {
 			rootPath: this.rootPath,
@@ -64,66 +61,36 @@ export class ProjectBrain {
 		}
 
 		this.snapshot = snapshot
-
 		return snapshot
 	}
 
-	getSnapshot(): ProjectSnapshot | undefined {
-		return this.snapshot
-	}
+	getSnapshot(): ProjectSnapshot | undefined { return this.snapshot }
 
 	getFile(relativePath: string): ProjectFile | undefined {
 		return this.snapshot?.filesByPath[relativePath]
 	}
 
 	search(options: ProjectSearchOptions): ProjectFile[] {
-		if (!this.snapshot) {
-			return []
-		}
-
+		if (!this.snapshot) return []
 		const query = options.query.toLowerCase()
 		const limit = options.limit ?? 50
-
 		return Object.values(this.snapshot.filesByPath)
 			.filter((file) => {
 				if (options.language && file.language !== options.language) return false
 				if (options.kind && file.kind !== options.kind) return false
-				if (
-					options.directory &&
-					!file.relativePath.startsWith(options.directory.replace(/\\/g, "/").replace(/\/$/, "") + "/")
-				) return false
+				if (options.directory && !file.relativePath.startsWith(options.directory.replace(/\\/g, "/").replace(/\/$/, "") + "/")) return false
 				return file.relativePath.toLowerCase().includes(query)
 			})
 			.slice(0, limit)
 	}
 
-	findSymbols(query: SymbolQuery): SymbolRecord[] {
-		return this.symbolIndex.find(query)
-	}
-
-	getSymbolsInFile(filePath: string): SymbolRecord[] {
-		return this.symbolIndex.getByFile(filePath)
-	}
-
-	getSymbolAnalysis(filePath: string) {
-		return this.symbolIndex.getAnalysis(filePath)
-	}
-
-	getDependencies(filePath: string): string[] {
-		return this.dependencyIndex.getDependencies(filePath)
-	}
-
-	getDependents(filePath: string): string[] {
-		return this.dependencyIndex.getDependents(filePath)
-	}
-
-	getDependencyGraph(): DependencyGraphSnapshot {
-		return this.dependencyIndex.getSnapshot()
-	}
-
-	getRootPath(): string {
-		return this.rootPath
-	}
+	findSymbols(query: SymbolQuery): SymbolRecord[] { return this.symbolIndex.find(query) }
+	getSymbolsInFile(filePath: string): SymbolRecord[] { return this.symbolIndex.getByFile(filePath) }
+	getSymbolAnalysis(filePath: string) { return this.symbolIndex.getAnalysis(filePath) }
+	getDependencies(filePath: string): string[] { return this.dependencyIndex.getDependencies(filePath) }
+	getDependents(filePath: string): string[] { return this.dependencyIndex.getDependents(filePath) }
+	getDependencyGraph(): DependencyGraphSnapshot { return this.dependencyIndex.getSnapshot() }
+	getRootPath(): string { return this.rootPath }
 
 	dispose(): void {
 		this.symbolIndex.clear()
@@ -131,31 +98,18 @@ export class ProjectBrain {
 		this.snapshot = undefined
 	}
 
-	private getAnalyses() {
+	private getAnalyses(files: ProjectFile[]) {
 		const analyses = new Map<string, NonNullable<ReturnType<SymbolIndex["getAnalysis"]>>>()
-		for (const file of this.snapshot ? Object.keys(this.snapshot.filesByPath) : []) {
-			const analysis = this.symbolIndex.getAnalysis(file)
-			if (analysis) analyses.set(file, analysis)
-		}
-		if (analyses.size === 0) {
-			for (const file of Object.keys(this.snapshot?.filesByPath ?? {})) {
-				const analysis = this.symbolIndex.getAnalysis(file)
-				if (analysis) analyses.set(file, analysis)
-			}
+		for (const file of files) {
+			const analysis = this.symbolIndex.getAnalysis(file.relativePath)
+			if (analysis) analyses.set(file.relativePath, analysis)
 		}
 		return analyses
 	}
 
 	private detectEntryPoints(files: ProjectFile[]): string[] {
-		const entryPointNames = new Set([
-			"index.ts", "index.tsx", "index.js", "index.jsx",
-			"main.ts", "main.tsx", "main.js", "main.jsx",
-			"app.ts", "app.tsx", "app.js", "app.jsx",
-		])
-
-		return files
-			.filter((file) => entryPointNames.has(file.relativePath.split("/").pop() ?? ""))
-			.map((file) => file.relativePath)
+		const entryPointNames = new Set(["index.ts", "index.tsx", "index.js", "index.jsx", "main.ts", "main.tsx", "main.js", "main.jsx", "app.ts", "app.tsx", "app.js", "app.jsx"])
+		return files.filter((file) => entryPointNames.has(file.relativePath.split("/").pop() ?? "")).map((file) => file.relativePath)
 	}
 }
 
