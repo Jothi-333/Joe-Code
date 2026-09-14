@@ -61,6 +61,22 @@ export * from "./types"
 		]))
 	})
 
+	it("extracts call sites with their enclosing function or method", () => {
+		const source = `
+function save() {}
+function create() { save(); console.log("created") }
+class Service { save() {} run() { this.save() } }
+`
+
+		const result = analyzer.analyze("service.ts", source, "typescript")
+
+		expect(result.calls).toEqual(expect.arrayContaining([
+			expect.objectContaining({ callerName: "create", calleeName: "save", kind: "call" }),
+			expect.objectContaining({ callerName: "create", calleeName: "log", receiver: "console", kind: "call" }),
+			expect.objectContaining({ callerName: "run", callerParentName: "Service", calleeName: "save", receiver: "this", kind: "call" }),
+		]))
+	})
+
 	it("records source locations", () => {
 		const result = analyzer.analyze("sample.ts", "export function hello() {}\n", "typescript")
 		const hello = result.symbols.find((symbol) => symbol.name === "hello")
