@@ -10,7 +10,7 @@ import type {
 	GitCommandRunner,
 } from "../domain/GitSnapshot"
 
-const FIELD_SEPARATOR = "\x1f"
+const FIELD_SEPARATOR = "%x1f"
 
 export class GitIntelligence {
 	constructor(private readonly rootPath: string, private readonly runner: GitCommandRunner) {}
@@ -42,10 +42,11 @@ export class GitIntelligence {
 	async getFileHistory(filePath: string, limit = 20): Promise<GitFileHistoryEntry[]> {
 		const count = Math.max(1, Math.min(limit, 200))
 		const format = ["%H", "%h", "%an", "%ae", "%aI", "%s"].join(FIELD_SEPARATOR)
-		const output = await this.runner.run(["log", "-" + count, "--date=iso-strict", "--name-status", "--format=" + format, "--", this.safePath(filePath)])
+		const safePath = this.safePath(filePath)
+		const output = await this.runner.run(["log", "-" + count, "--date=iso-strict", "--name-status", "--format=" + format, "--", safePath])
 		const commits = this.parseCommits(output)
 		const statuses = output.split("\n").filter((line) => /^[AMDRC][0-9]?\t/.test(line.trim())).map((line) => this.parseNameStatus(line))
-		return commits.map((commit, index) => ({ ...commit, path: statuses[index]?.path ?? this.safePath(filePath), status: statuses[index]?.status ?? "unknown" }))
+		return commits.map((commit, index) => ({ ...commit, path: statuses[index]?.path ?? safePath, status: statuses[index]?.status ?? "unknown" }))
 	}
 
 	async getBlame(filePath: string): Promise<GitBlameLine[]> {
