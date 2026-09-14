@@ -3,8 +3,10 @@ import type { ProjectSnapshot } from "./domain/ProjectSnapshot"
 import type { StructuralSymbol } from "./domain/StructuralAnalysis"
 import type { SymbolRecord } from "./domain/SymbolRecord"
 import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
+import type { CallGraphSnapshot } from "./domain/CallGraph"
 import { SymbolIndex, type SymbolQuery } from "./indexing/SymbolIndex"
 import { DependencyIndex } from "./indexing/DependencyIndex"
+import { CallGraphIndex } from "./indexing/CallGraphIndex"
 import { ProjectScanner } from "./indexing/ProjectScanner"
 
 export interface ProjectSearchOptions {
@@ -20,6 +22,7 @@ export class ProjectBrain {
 	private readonly scanner: ProjectScanner
 	private readonly symbolIndex: SymbolIndex
 	private readonly dependencyIndex: DependencyIndex
+	private readonly callGraphIndex: CallGraphIndex
 	private snapshot: ProjectSnapshot | undefined
 
 	constructor(rootPath: string) {
@@ -27,6 +30,7 @@ export class ProjectBrain {
 		this.scanner = new ProjectScanner(rootPath)
 		this.symbolIndex = new SymbolIndex()
 		this.dependencyIndex = new DependencyIndex()
+		this.callGraphIndex = new CallGraphIndex()
 	}
 
 	async initialize(): Promise<ProjectSnapshot> {
@@ -43,7 +47,9 @@ export class ProjectBrain {
 			if (file.language) languages[file.language] = (languages[file.language] ?? 0) + 1
 		}
 		await this.symbolIndex.indexFiles(files)
-		this.dependencyIndex.build(files, this.symbolIndex.getAnalyses())
+		const analyses = this.symbolIndex.getAnalyses()
+		this.dependencyIndex.build(files, analyses)
+		this.callGraphIndex.build(files, this.symbolIndex.getAll(), analyses)
 		const snapshot: ProjectSnapshot = {
 			rootPath: this.rootPath,
 			createdAt: this.snapshot?.createdAt ?? now,
@@ -80,11 +86,15 @@ export class ProjectBrain {
 	getDependencies(filePath: string): string[] { return this.dependencyIndex.getDependencies(filePath) }
 	getDependents(filePath: string): string[] { return this.dependencyIndex.getDependents(filePath) }
 	getDependencyGraph(): DependencyGraphSnapshot { return this.dependencyIndex.getSnapshot() }
+	getCallees(symbolId: string): string[] { return this.callGraphIndex.getCallees(symbolId) }
+	getCallers(symbolId: string): string[] { return this.callGraphIndex.getCallers(symbolId) }
+	getCallGraph(): CallGraphSnapshot { return this.callGraphIndex.getSnapshot() }
 	getRootPath(): string { return this.rootPath }
 
 	dispose(): void {
 		this.symbolIndex.clear()
 		this.dependencyIndex.clear()
+		this.callGraphIndex.clear()
 		this.snapshot = undefined
 	}
 
