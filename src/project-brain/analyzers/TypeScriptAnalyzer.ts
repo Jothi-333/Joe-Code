@@ -19,6 +19,10 @@ const SCRIPT_KIND_BY_EXTENSION: Record<string, ts.ScriptKind> = {
 }
 
 export class TypeScriptAnalyzer {
+	supports(language: string): language is "typescript" | "javascript" {
+		return language === "typescript" || language === "javascript"
+	}
+
 	analyze(filePath: string, source: string, language: "typescript" | "javascript"): StructuralAnalysis {
 		const extension = filePath.slice(filePath.lastIndexOf(".")).toLowerCase()
 		const scriptKind = SCRIPT_KIND_BY_EXTENSION[extension] ?? (language === "typescript" ? ts.ScriptKind.TS : ts.ScriptKind.JS)
@@ -28,8 +32,9 @@ export class TypeScriptAnalyzer {
 		const exports: StructuralExport[] = []
 		const calls: StructuralCall[] = []
 
+		const modifiersOf = (node: ts.Node) => (ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined)
 		const addSymbol = (node: ts.Node, name: string, kind: StructuralSymbolKind, parentName?: string) => {
-			const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
+			const modifiers = modifiersOf(node)
 			symbols.push({
 				name,
 				kind,
@@ -41,9 +46,9 @@ export class TypeScriptAnalyzer {
 			})
 		}
 
-		const visit = (node: ts.Node) => {
+		const visitSymbols = (node: ts.Node) => {
 			if (ts.isFunctionDeclaration(node) && node.name) addSymbol(node, node.name.text, "function")
-			else if (ts.isClassDeclaration(node) && node.name) {
+			if (ts.isClassDeclaration(node) && node.name) {
 				addSymbol(node, node.name.text, "class")
 				for (const member of node.members) {
 					if (ts.isMethodDeclaration(member) && member.name) {
@@ -54,17 +59,17 @@ export class TypeScriptAnalyzer {
 						if (name) addSymbol(member, name, "property", node.name.text)
 					}
 				}
-			} else if (ts.isInterfaceDeclaration(node)) addSymbol(node, node.name.text, "interface")
-			else if (ts.isTypeAliasDeclaration(node)) addSymbol(node, node.name.text, "type")
-			else if (ts.isEnumDeclaration(node)) addSymbol(node, node.name.text, "enum")
-			else if (ts.isVariableStatement(node)) {
-				const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined
-				const exported = modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false
+			}
+			if (ts.isInterfaceDeclaration(node)) addSymbol(node, node.name.text, "interface")
+			if (ts.isTypeAliasDeclaration(node)) addSymbol(node, node.name.text, "type")
+			if (ts.isEnumDeclaration(node)) addSymbol(node, node.name.text, "enum")
+			if (ts.isVariableStatement(node)) {
+				const exported = modifiersOf(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false
 				for (const declaration of node.declarationList.declarations) {
 					if (ts.isIdentifier(declaration.name)) symbols.push({ name: declaration.name.text, kind: "variable", location: this.location(sourceFile, declaration), exported })
 				}
 			}
-			ts.forEachChild(node, visit)
+			ts.forEachChild(node, visitSymbols)
 		}
 
 		const visitImportsExports = (node: ts.Node) => {
@@ -73,10 +78,18 @@ export class TypeScriptAnalyzer {
 			ts.forEachChild(node, visitImportsExports)
 		}
 
-		visit(sourceFile)
+		visitSymbols(sourceFile)
 		visitImportsExports(sourceFile)
 		this.collectCalls(sourceFile, calls)
-		return { filePath, language, symbols, imports, exports, calls }
+
+		return {
+			filePath,
+			language,
+			symbols: this.dedupeSymbols(symbols),
+			imports: this.dedupeImports(imports),
+			exports: this.dedupeExports(exports),
+			calls,
+		}
 	}
 
 	private collectImport(node: ts.ImportDeclaration, sourceFile: ts.SourceFile, imports: StructuralImport[]): void {
@@ -87,11 +100,27 @@ export class TypeScriptAnalyzer {
 		if (clause) {
 			defaultImport = clause.name?.text
 			if (clause.namedBindings) {
-				if (ts.isNamespaceImport(clause.namedBindings)) namespaceImport = clause.namedBindings.name.text
-				else for (const element of clause.namedBindings.elements) namedImports.push({ name: element.propertyName?.text ?? element.name.text, alias: element.propertyName ? element.name.text : undefined, isTypeOnly: element.isTypeOnly })
+				if (ts.isNamespaceImport(clause.namedBindings)) {
+					namespaceImport = clause.namedBindings.name.text
+				} else {
+					for (const element of clause.namedBindings.elements) {
+						namedImports.push({
+							name: element.propertyName?.text ?? element.name.text,
+							alias: element.propertyName ? element.name.text : undefined,
+							isTypeOnly: element.isTypeOnly,
+						})
+					}
+				}
 			}
 		}
-		imports.push({ source: (node.moduleSpecifier as ts.StringLiteral).text, defaultImport, namespaceImport, namedImports, isTypeOnly: clause?.isTypeOnly ?? false, location: this.location(sourceFile, node) })
+		imports.push({
+			source: (node.moduleSpecifier as ts.StringLiteral).text,
+			defaultImport,
+			namespaceImport,
+			namedImports,
+			isTypeOnly: clause?.isTypeOnly ?? false,
+			location: this.location(sourceFile, node),
+		})
 	}
 
 	private collectExportDeclaration(node: ts.ExportDeclaration, sourceFile: ts.SourceFile, exports: StructuralExport[]): void {
@@ -101,7 +130,13 @@ export class TypeScriptAnalyzer {
 		}
 		if (ts.isNamedExports(node.exportClause)) {
 			for (const element of node.exportClause.elements) {
-				exports.push({ name: element.name.text, localName: element.propertyName?.text ?? element.name.text, source: node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : undefined, isTypeOnly: node.isTypeOnly || element.isTypeOnly, location: this.location(sourceFile, element) })
+				exports.push({
+					name: element.name.text,
+					localName: element.propertyName?.text ?? element.name.text,
+					source: node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : undefined,
+					isTypeOnly: node.isTypeOnly || element.isTypeOnly,
+					location: this.location(sourceFile, element),
+				})
 			}
 		}
 	}
@@ -127,8 +162,8 @@ export class TypeScriptAnalyzer {
 	private expressionName(expression: ts.Expression): string {
 		if (ts.isIdentifier(expression)) return expression.text
 		if (ts.isPropertyAccessExpression(expression)) return expression.name.text
-		if (ts.isElementAccessExpression(expression) && ts.isStringLiteral(expression.argumentExpression)) return expression.argumentExpression.text
-		return expression.getText(sourceFileForText(expression))
+		if (ts.isElementAccessExpression(expression)) return this.expressionName(expression.expression)
+		return expression.getText(expression.getSourceFile())
 	}
 
 	private receiverName(expression: ts.Expression): string | undefined {
@@ -154,10 +189,36 @@ export class TypeScriptAnalyzer {
 		const end = node.getEnd()
 		const startPos = sourceFile.getLineAndCharacterOfPosition(start)
 		const endPos = sourceFile.getLineAndCharacterOfPosition(end)
-		return { start, end, startLine: startPos.line + 1, startColumn: startPos.character, endLine: endPos.line + 1, endColumn: endPos.character }
+		return { start, end, startLine: startPos.line + 1, startColumn: startPos.character + 1, endLine: endPos.line + 1, endColumn: endPos.character + 1 }
 	}
-}
 
-function sourceFileForText(node: ts.Node): ts.SourceFile {
-	return node.getSourceFile()
+	private dedupeSymbols(symbols: StructuralSymbol[]): StructuralSymbol[] {
+		const seen = new Set<string>()
+		return symbols.filter((symbol) => {
+			const key = `${symbol.kind}:${symbol.parentName ?? ""}:${symbol.name}:${symbol.location.start}`
+			if (seen.has(key)) return false
+			seen.add(key)
+			return true
+		})
+	}
+
+	private dedupeImports(imports: StructuralImport[]): StructuralImport[] {
+		const seen = new Set<string>()
+		return imports.filter((item) => {
+			const key = `${item.source}:${item.location.start}`
+			if (seen.has(key)) return false
+			seen.add(key)
+			return true
+		})
+	}
+
+	private dedupeExports(exports: StructuralExport[]): StructuralExport[] {
+		const seen = new Set<string>()
+		return exports.filter((entry) => {
+			const key = `${entry.name}:${entry.localName ?? ""}:${entry.source ?? ""}:${entry.location.start}`
+			if (seen.has(key)) return false
+			seen.add(key)
+			return true
+		})
+	}
 }
