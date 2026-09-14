@@ -23,6 +23,32 @@ describe("ProjectBrain", () => {
 		expect(brain.getFile("src/index.ts")).toBeDefined()
 	})
 
+	it("builds and exposes the architecture model during indexing", async () => {
+		const root = await mkdtemp(path.join(os.tmpdir(), "joe-code-architecture-"))
+		await mkdir(path.join(root, "src", "api"), { recursive: true })
+		await mkdir(path.join(root, "src", "ui"), { recursive: true })
+
+		await writeFile(path.join(root, "src", "api", "User.ts"), "export interface User { id: string }\n")
+		await writeFile(path.join(root, "src", "api", "UserService.ts"), "import { User } from './User'\nexport class UserService {}\n")
+		await writeFile(path.join(root, "src", "ui", "App.ts"), "import { UserService } from '../api/UserService'\nexport class App { service = new UserService() }\n")
+
+		const brain = new ProjectBrain(root)
+		await brain.initialize()
+
+		const architecture = brain.getArchitecture()
+		expect(architecture).toBeDefined()
+		expect(architecture?.entryPoints).toContain("src/ui/App.ts")
+		expect(architecture?.modules.map((module) => module.path)).toEqual(["src/api", "src/ui"])
+		expect(architecture?.relationships).toEqual([
+			{
+				from: "src/ui",
+				to: "src/api",
+				dependencyCount: 1,
+				files: ["src/ui/App.ts"],
+			},
+		])
+	})
+
 	it("searches files by path", async () => {
 		const root = await mkdtemp(path.join(os.tmpdir(), "joe-code-brain-"))
 
