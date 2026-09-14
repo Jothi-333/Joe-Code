@@ -1,4 +1,6 @@
 export * from "./ProjectBrain"
 export * from "./domain/ProjectFile"
 export * from "./domain/ProjectSnapshot"
+export * from "./domain/StructuralAnalysis"
 export * from "./indexing/ProjectScanner"
+export * from "./analyzers/TypeScriptAnalyzer"
