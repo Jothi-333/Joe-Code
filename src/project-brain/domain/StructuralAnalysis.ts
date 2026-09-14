@@ -48,10 +48,20 @@ export interface StructuralExport {
 	location: SourceLocation
 }
 
+export interface StructuralCall {
+	callerName?: string
+	callerParentName?: string
+	calleeName: string
+	receiver?: string
+	kind: "call" | "construct"
+	location: SourceLocation
+}
+
 export interface StructuralAnalysis {
 	filePath: string
 	language: "typescript" | "javascript"
 	symbols: StructuralSymbol[]
 	imports: StructuralImport[]
 	exports: StructuralExport[]
+	calls: StructuralCall[]
 }
