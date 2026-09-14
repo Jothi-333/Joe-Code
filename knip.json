@@ -12,7 +12,7 @@
 	],
 	"workspaces": {
 		"src": {
-			"entry": ["extension.ts"],
+			"entry": ["extension.ts", "project-brain/index.ts"],
 			"project": ["**/*.ts"]
 		},
 		"webview-ui": {
