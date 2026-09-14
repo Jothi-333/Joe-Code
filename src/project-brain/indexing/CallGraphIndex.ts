@@ -10,7 +10,6 @@ export class CallGraphIndex {
 
 	build(files: ProjectFile[], symbols: SymbolRecord[], analyses: Map<string, StructuralAnalysis>): CallGraphSnapshot {
 		const filePaths = new Set(files.map((file) => file.relativePath))
-		const symbolById = new Map(symbols.map((symbol) => [symbol.id, symbol]))
 		const byFile = new Map<string, SymbolRecord[]>()
 		for (const symbol of symbols) {
 			const list = byFile.get(symbol.filePath) ?? []
@@ -21,11 +20,10 @@ export class CallGraphIndex {
 		const edges: CallGraphEdge[] = []
 		for (const [filePath, analysis] of analyses) {
 			const fileSymbols = byFile.get(filePath) ?? []
-			const imports = analysis.imports
 			for (const call of analysis.calls) {
 				const from = this.resolveCaller(fileSymbols, call)
 				if (!from) continue
-				const to = this.resolveCallee(filePath, call, fileSymbols, imports, byFile, filePaths)
+				const to = this.resolveCallee(filePath, call, fileSymbols, analysis.imports, byFile, filePaths)
 				edges.push({
 					from: from.id,
 					to: to?.id,
@@ -47,7 +45,6 @@ export class CallGraphIndex {
 			;(incoming[edge.to] ??= []).push(edge.from)
 		}
 		this.snapshot = { edges: uniqueEdges, incoming, outgoing }
-		void symbolById
 		return this.snapshot
 	}
 
