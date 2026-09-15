@@ -4,7 +4,14 @@ import type { StructuralSymbol } from "./domain/StructuralAnalysis"
 import type { SymbolRecord } from "./domain/SymbolRecord"
 import type { DependencyGraphSnapshot } from "./domain/DependencyGraph"
 import type { CallGraphSnapshot } from "./domain/CallGraph"
-import type { GitCommit, GitBlameLine, GitDiffSummary, GitFileHistoryEntry, GitRepositoryStatus, GitCommandRunner } from "./domain/GitSnapshot"
+import type {
+	GitCommit,
+	GitBlameLine,
+	GitDiffSummary,
+	GitFileHistoryEntry,
+	GitRepositoryStatus,
+	GitCommandRunner,
+} from "./domain/GitSnapshot"
 import type { BrainQueryOptions, BrainQueryResult } from "./domain/BrainQuery"
 import type { SemanticIndex } from "./domain/SemanticIndex"
 import type { ArchitectureModel } from "./architecture/ArchitectureModel"
@@ -46,7 +53,9 @@ export class ProjectBrain {
 		this.semanticIndex = semanticIndex
 	}
 
-	async initialize(): Promise<ProjectSnapshot> { return this.index() }
+	async initialize(): Promise<ProjectSnapshot> {
+		return this.index()
+	}
 
 	async index(): Promise<ProjectSnapshot> {
 		const now = Date.now()
@@ -89,7 +98,12 @@ export class ProjectBrain {
 		if (!this.snapshot) await this.index()
 		const limit = Math.max(1, options.limit ?? 20)
 		const filesByPath = this.snapshot?.filesByPath ?? {}
-		const files = this.search({ query: options.query, language: options.language, directory: options.directory, limit })
+		const files = this.search({
+			query: options.query,
+			language: options.language,
+			directory: options.directory,
+			limit,
+		})
 		const symbols = this.findSymbols({ name: options.query, limit: Math.max(limit * 2, 20) })
 			.filter((symbol) => this.matchesDirectory(symbol.filePath, options.directory))
 			.slice(0, limit)
@@ -98,13 +112,14 @@ export class ProjectBrain {
 			const file = filesByPath[symbol.filePath]
 			if (file) resultFiles.set(file.relativePath, file)
 		}
-		const semantic = options.includeSemantic === false || !this.semanticIndex
-			? []
-			: await this.semanticIndex.search(options.query, {
-					...options.semantic,
-					limit: options.semantic?.limit ?? limit,
-					directory: options.semantic?.directory ?? options.directory,
-				})
+		const semantic =
+			options.includeSemantic === false || !this.semanticIndex
+				? []
+				: await this.semanticIndex.search(options.query, {
+						...options.semantic,
+						limit: options.semantic?.limit ?? limit,
+						directory: options.semantic?.directory ?? options.directory,
+					})
 		const related = new Set<string>()
 		for (const file of resultFiles.values()) this.addRelatedFile(related, file.relativePath)
 		for (const symbol of symbols) {
@@ -112,11 +127,15 @@ export class ProjectBrain {
 			for (const dependency of this.getDependencies(symbol.filePath)) related.add(dependency)
 			for (const dependent of this.getDependents(symbol.filePath)) related.add(dependent)
 			for (const caller of this.getCallers(symbol.id)) {
-				const callerSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find((candidate) => candidate.id === caller)
+				const callerSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find(
+					(candidate) => candidate.id === caller,
+				)
 				if (callerSymbol) related.add(callerSymbol.filePath)
 			}
 			for (const callee of this.getCallees(symbol.id)) {
-				const calleeSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find((candidate) => candidate.id === callee)
+				const calleeSymbol = this.findSymbols({ limit: Number.MAX_SAFE_INTEGER }).find(
+					(candidate) => candidate.id === callee,
+				)
 				if (calleeSymbol) related.add(calleeSymbol.filePath)
 			}
 		}
@@ -126,42 +145,86 @@ export class ProjectBrain {
 			files: [...resultFiles.values()].slice(0, limit),
 			symbols,
 			semantic,
-			relatedFiles: [...related].filter((filePath) => this.matchesDirectory(filePath, options.directory)).slice(0, limit * 4),
+			relatedFiles: [...related]
+				.filter((filePath) => this.matchesDirectory(filePath, options.directory))
+				.slice(0, limit * 4),
 		}
 	}
 
-	getSnapshot(): ProjectSnapshot | undefined { return this.snapshot }
-	getArchitecture(): ArchitectureModel | undefined { return this.architecture }
-	getFile(relativePath: string): ProjectFile | undefined { return this.snapshot?.filesByPath[relativePath] }
+	getSnapshot(): ProjectSnapshot | undefined {
+		return this.snapshot
+	}
+	getArchitecture(): ArchitectureModel | undefined {
+		return this.architecture
+	}
+	getFile(relativePath: string): ProjectFile | undefined {
+		return this.snapshot?.filesByPath[relativePath]
+	}
 	search(options: ProjectSearchOptions): ProjectFile[] {
 		if (!this.snapshot) return []
 		const query = options.query.toLowerCase()
 		const limit = options.limit ?? 50
-		return Object.values(this.snapshot.filesByPath).filter((file) => {
-			if (options.language && file.language !== options.language) return false
-			if (options.kind && file.kind !== options.kind) return false
-			if (options.directory && !file.relativePath.startsWith(options.directory.replace(/\\/g, "/").replace(/\/$/, "") + "/")) return false
-			return file.relativePath.toLowerCase().includes(query)
-		}).slice(0, limit)
+		return Object.values(this.snapshot.filesByPath)
+			.filter((file) => {
+				if (options.language && file.language !== options.language) return false
+				if (options.kind && file.kind !== options.kind) return false
+				if (
+					options.directory &&
+					!file.relativePath.startsWith(options.directory.replace(/\\/g, "/").replace(/\/$/, "") + "/")
+				)
+					return false
+				return file.relativePath.toLowerCase().includes(query)
+			})
+			.slice(0, limit)
 	}
 
-	findSymbols(query: SymbolQuery): SymbolRecord[] { return this.symbolIndex.find(query) }
-	getSymbolsInFile(filePath: string): SymbolRecord[] { return this.symbolIndex.getByFile(filePath) }
-	getSymbolAnalysis(filePath: string) { return this.symbolIndex.getAnalysis(filePath) }
-	getDependencies(filePath: string): string[] { return this.dependencyIndex.getDependencies(filePath) }
-	getDependents(filePath: string): string[] { return this.dependencyIndex.getDependents(filePath) }
-	getDependencyGraph(): DependencyGraphSnapshot { return this.dependencyIndex.getSnapshot() }
-	getCallees(symbolId: string): string[] { return this.callGraphIndex.getCallees(symbolId) }
-	getCallers(symbolId: string): string[] { return this.callGraphIndex.getCallers(symbolId) }
-	getCallGraph(): CallGraphSnapshot { return this.callGraphIndex.getSnapshot() }
+	findSymbols(query: SymbolQuery): SymbolRecord[] {
+		return this.symbolIndex.find(query)
+	}
+	getSymbolsInFile(filePath: string): SymbolRecord[] {
+		return this.symbolIndex.getByFile(filePath)
+	}
+	getSymbolAnalysis(filePath: string) {
+		return this.symbolIndex.getAnalysis(filePath)
+	}
+	getDependencies(filePath: string): string[] {
+		return this.dependencyIndex.getDependencies(filePath)
+	}
+	getDependents(filePath: string): string[] {
+		return this.dependencyIndex.getDependents(filePath)
+	}
+	getDependencyGraph(): DependencyGraphSnapshot {
+		return this.dependencyIndex.getSnapshot()
+	}
+	getCallees(symbolId: string): string[] {
+		return this.callGraphIndex.getCallees(symbolId)
+	}
+	getCallers(symbolId: string): string[] {
+		return this.callGraphIndex.getCallers(symbolId)
+	}
+	getCallGraph(): CallGraphSnapshot {
+		return this.callGraphIndex.getSnapshot()
+	}
 
-	async getGitStatus(): Promise<GitRepositoryStatus> { return this.requireGit().getStatus() }
-	async getRecentCommits(limit = 20): Promise<GitCommit[]> { return this.requireGit().getRecentCommits(limit) }
-	async getFileHistory(filePath: string, limit = 20): Promise<GitFileHistoryEntry[]> { return this.requireGit().getFileHistory(filePath, limit) }
-	async getBlame(filePath: string): Promise<GitBlameLine[]> { return this.requireGit().getBlame(filePath) }
-	async getGitDiff(base?: string, head = "HEAD", filePath?: string): Promise<GitDiffSummary> { return this.requireGit().getDiff(base, head, filePath) }
+	async getGitStatus(): Promise<GitRepositoryStatus> {
+		return this.requireGit().getStatus()
+	}
+	async getRecentCommits(limit = 20): Promise<GitCommit[]> {
+		return this.requireGit().getRecentCommits(limit)
+	}
+	async getFileHistory(filePath: string, limit = 20): Promise<GitFileHistoryEntry[]> {
+		return this.requireGit().getFileHistory(filePath, limit)
+	}
+	async getBlame(filePath: string): Promise<GitBlameLine[]> {
+		return this.requireGit().getBlame(filePath)
+	}
+	async getGitDiff(base?: string, head = "HEAD", filePath?: string): Promise<GitDiffSummary> {
+		return this.requireGit().getDiff(base, head, filePath)
+	}
 
-	getRootPath(): string { return this.rootPath }
+	getRootPath(): string {
+		return this.rootPath
+	}
 	dispose(): void {
 		this.symbolIndex.clear()
 		this.dependencyIndex.clear()
@@ -188,8 +251,23 @@ export class ProjectBrain {
 	}
 
 	private detectEntryPoints(files: ProjectFile[]): string[] {
-		const entryPointNames = new Set(["index.ts", "index.tsx", "index.js", "index.jsx", "main.ts", "main.tsx", "main.js", "main.jsx", "app.ts", "app.tsx", "app.js", "app.jsx"])
-		return files.filter((file) => entryPointNames.has(file.relativePath.split("/").pop() ?? "")).map((file) => file.relativePath)
+		const entryPointNames = new Set([
+			"index.ts",
+			"index.tsx",
+			"index.js",
+			"index.jsx",
+			"main.ts",
+			"main.tsx",
+			"main.js",
+			"main.jsx",
+			"app.ts",
+			"app.tsx",
+			"app.js",
+			"app.jsx",
+		])
+		return files
+			.filter((file) => entryPointNames.has((file.relativePath.split("/").pop() ?? "").toLowerCase()))
+			.map((file) => file.relativePath)
 	}
 }
 
