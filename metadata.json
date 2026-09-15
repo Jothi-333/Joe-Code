@@ -1,0 +1,6 @@
+{
+  "name": "Joe Code",
+  "description": "Interactive in the IDE, autonomous in the cloud - AI Software Engineering Team platform",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

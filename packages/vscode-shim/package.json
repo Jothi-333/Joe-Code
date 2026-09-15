@@ -11,8 +11,8 @@
 		"clean": "rimraf .turbo"
 	},
 	"devDependencies": {
-		"@roo-code/config-eslint": "workspace:^",
-		"@roo-code/config-typescript": "workspace:^",
+		"@roo-code/config-eslint": "*",
+		"@roo-code/config-typescript": "*",
 		"@types/node": "^24.1.0",
 		"vitest": "^3.2.3"
 	},

@@ -10,9 +10,9 @@
 		"clean": "rimraf out .turbo"
 	},
 	"devDependencies": {
-		"@roo-code/config-eslint": "workspace:^",
-		"@roo-code/config-typescript": "workspace:^",
-		"@roo-code/types": "workspace:^",
+		"@roo-code/config-eslint": "*",
+		"@roo-code/config-typescript": "*",
+		"@roo-code/types": "*",
 		"@types/mocha": "^10.0.10",
 		"@types/node": "20.x",
 		"@types/vscode": "^1.95.0",

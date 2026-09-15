@@ -22,9 +22,9 @@
 	},
 	"dependencies": {
 		"@inkjs/ui": "^2.0.0",
-		"@roo-code/core": "workspace:^",
-		"@roo-code/types": "workspace:^",
-		"@roo-code/vscode-shim": "workspace:^",
+		"@roo-code/core": "*",
+		"@roo-code/types": "*",
+		"@roo-code/vscode-shim": "*",
 		"@trpc/client": "^11.8.1",
 		"@vscode/ripgrep": "^1.15.9",
 		"commander": "^12.1.0",
@@ -38,8 +38,8 @@
 		"zustand": "^5.0.0"
 	},
 	"devDependencies": {
-		"@roo-code/config-eslint": "workspace:^",
-		"@roo-code/config-typescript": "workspace:^",
+		"@roo-code/config-eslint": "*",
+		"@roo-code/config-typescript": "*",
 		"@types/node": "^24.1.0",
 		"@types/react": "^19.1.6",
 		"ink-testing-library": "^4.0.0",
